@@ -1,0 +1,398 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>노노그램 마스터 (문제지/정답지 생성기)</title>
+    <script src="https://html2canvas.hertzen.com/dist/html2canvas.min.js"></script>
+    <style>
+        :root {
+            --cell-size: 22px;
+            --border-std: 1px solid #bbb;
+            --border-thick: 2px solid #000;
+            --filled-color: #2c3e50;
+            --hover-color: #e0e0e0;
+        }
+
+        body {
+            font-family: 'Segoe UI', sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            background-color: #f5f5f5;
+            padding: 20px;
+            height: 100vh;
+            overflow: hidden;
+        }
+
+        .controls {
+            background: white;
+            padding: 10px 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+            margin-bottom: 10px;
+            display: flex;
+            gap: 10px;
+            align-items: center;
+            flex-wrap: wrap;
+            justify-content: center;
+            z-index: 10;
+        }
+
+        .input-group { display: flex; align-items: center; gap: 5px; }
+        
+        input[type="number"] {
+            width: 50px;
+            padding: 5px;
+            text-align: center;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+        }
+
+        button {
+            padding: 8px 14px;
+            background-color: #3498db;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-weight: bold;
+            font-size: 13px;
+            white-space: nowrap;
+        }
+        button:hover { background-color: #2980b9; }
+        button.reset { background-color: #e74c3c; }
+        button.secondary { background-color: #95a5a6; }
+        
+        /* 버튼 스타일 구분 */
+        button.print-problem { background-color: #8e44ad; } /* 보라색 */
+        button.print-problem:hover { background-color: #732d91; }
+        
+        button.print-answer { background-color: #27ae60; } /* 초록색 */
+        button.print-answer:hover { background-color: #219150; }
+
+        #scroll-wrapper {
+            flex: 1;
+            width: 100%;
+            overflow: auto;
+            display: flex;
+            justify-content: center;
+            align-items: flex-start;
+            padding: 10px;
+            border: 1px solid #ddd;
+            background: #fff;
+        }
+
+        .game-board {
+            display: grid;
+            gap: 0; 
+            border-top: var(--border-thick);
+            border-left: var(--border-thick);
+            user-select: none;
+            background-color: white;
+        }
+
+        .cell, .hint-h, .hint-v, .corner {
+            background-color: white;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            box-sizing: border-box;
+            font-size: 11px;
+            border-right: var(--border-std);
+            border-bottom: var(--border-std);
+        }
+
+        .hint-h {
+            flex-direction: column;
+            justify-content: flex-end;
+            padding-bottom: 2px;
+            background-color: #f0f0f5;
+            color: #333;
+            font-weight: bold;
+            line-height: 1.1;
+            white-space: pre-line;
+            min-height: 60px;
+        }
+
+        .hint-v {
+            justify-content: flex-end;
+            padding-right: 4px;
+            background-color: #f0f0f5;
+            color: #333;
+            font-weight: bold;
+            letter-spacing: 2px;
+            min-width: 60px;
+        }
+
+        .corner { background-color: #ccc; }
+
+        .cell {
+            width: var(--cell-size);
+            height: var(--cell-size);
+            cursor: crosshair;
+        }
+
+        .cell.filled { background-color: var(--filled-color); }
+        /* 캡처 시에도 색상이 유지되도록 important 사용 */
+        .cell.filled { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+
+        .cell:hover { background-color: var(--hover-color) !important; } 
+        .cell.filled:hover { opacity: 0.7; background-color: var(--filled-color) !important; }
+
+        .thick-right { border-right: var(--border-thick) !important; }
+        .thick-bottom { border-bottom: var(--border-thick) !important; }
+
+        #fileInput { display: none; }
+    </style>
+</head>
+<body>
+
+    <div class="controls">
+        <div class="input-group">
+            <label>가로 <input type="number" id="cols" value="15" min="5" max="50"></label>
+            <label>세로 <input type="number" id="rows" value="15" min="5" max="50"></label>
+        </div>
+        <button onclick="initGrid()">🔄 생성</button>
+        <button class="reset" onclick="clearCanvas()">🧹 지우기</button>
+        
+        <div style="width: 1px; height: 15px; background: #ddd; margin: 0 5px;"></div>
+        
+        <button class="print-problem" onclick="generateProblemSheet()">📜 문제지 저장</button>
+        <button class="print-answer" onclick="generateAnswerSheet()">✅ 정답지 저장</button>
+
+        <div style="width: 1px; height: 15px; background: #ddd; margin: 0 5px;"></div>
+
+        <button class="secondary" onclick="saveMap()">💾 작업저장 (JSON)</button>
+        <button class="secondary" onclick="document.getElementById('fileInput').click()">📂 불러오기</button>
+        <input type="file" id="fileInput" accept=".json" onchange="loadMap(this)">
+    </div>
+
+    <div id="scroll-wrapper">
+        <div id="board-container"></div>
+    </div>
+
+    <script>
+        let gridData = [];
+        let rows = 15;
+        let cols = 15;
+
+        let isMouseDown = false;
+        let isRightClick = false;
+        let currentDrawMode = 1;
+
+        window.onload = () => initGrid();
+
+        window.addEventListener('mouseup', () => {
+            isMouseDown = false;
+            isRightClick = false;
+        });
+
+        document.addEventListener('contextmenu', event => event.preventDefault());
+
+        function initGrid() {
+            rows = parseInt(document.getElementById('rows').value);
+            cols = parseInt(document.getElementById('cols').value);
+            gridData = Array(rows).fill().map(() => Array(cols).fill(0));
+            renderBoard();
+        }
+
+        function clearCanvas() {
+            gridData = gridData.map(row => row.map(() => 0));
+            updateAllVisuals();
+            updateHints();
+        }
+
+        function renderBoard() {
+            const container = document.getElementById('board-container');
+            container.innerHTML = '';
+            const board = document.createElement('div');
+            board.className = 'game-board';
+            board.style.gridTemplateColumns = `auto repeat(${cols}, var(--cell-size))`;
+
+            const corner = document.createElement('div');
+            corner.className = 'corner thick-right thick-bottom';
+            board.appendChild(corner);
+
+            for (let c = 0; c < cols; c++) {
+                const hintEl = document.createElement('div');
+                hintEl.className = 'hint-h thick-bottom';
+                hintEl.id = `hint-col-${c}`;
+                if ((c + 1) % 5 === 0) hintEl.classList.add('thick-right');
+                board.appendChild(hintEl);
+            }
+
+            for (let r = 0; r < rows; r++) {
+                const hintRowEl = document.createElement('div');
+                hintRowEl.className = 'hint-v thick-right';
+                hintRowEl.id = `hint-row-${r}`;
+                if ((r + 1) % 5 === 0) hintRowEl.classList.add('thick-bottom');
+                board.appendChild(hintRowEl);
+
+                for (let c = 0; c < cols; c++) {
+                    const cell = document.createElement('div');
+                    cell.className = 'cell';
+                    cell.dataset.r = r;
+                    cell.dataset.c = c;
+                    if ((c + 1) % 5 === 0) cell.classList.add('thick-right');
+                    if ((r + 1) % 5 === 0) cell.classList.add('thick-bottom');
+                    cell.addEventListener('mousedown', (e) => handleMouseDown(e, r, c));
+                    cell.addEventListener('mouseenter', (e) => handleMouseEnter(e, r, c));
+                    board.appendChild(cell);
+                }
+            }
+            container.appendChild(board);
+            updateAllVisuals();
+            updateHints();
+        }
+
+        function handleMouseDown(e, r, c) {
+            isMouseDown = true;
+            if (e.button === 2) { 
+                isRightClick = true;
+                currentDrawMode = 0; 
+            } else {
+                isRightClick = false;
+                currentDrawMode = gridData[r][c] === 1 ? 0 : 1;
+            }
+            applyCellState(r, c);
+        }
+
+        function handleMouseEnter(e, r, c) {
+            if (!isMouseDown) return;
+            applyCellState(r, c);
+        }
+
+        function applyCellState(r, c) {
+            if (gridData[r][c] !== currentDrawMode) {
+                gridData[r][c] = currentDrawMode;
+                updateVisualCell(r, c);
+                updateHints();
+            }
+        }
+
+        function updateVisualCell(r, c) {
+            const cell = document.querySelector(`.cell[data-r="${r}"][data-c="${c}"]`);
+            if (cell) {
+                if (gridData[r][c] === 1) cell.classList.add('filled');
+                else cell.classList.remove('filled');
+            }
+        }
+
+        function updateAllVisuals() {
+            for(let r=0; r<rows; r++){
+                for(let c=0; c<cols; c++){
+                    updateVisualCell(r, c);
+                }
+            }
+        }
+
+        function calculateHints(line) {
+            let hints = [];
+            let count = 0;
+            for (let val of line) {
+                if (val === 1) count++;
+                else if (count > 0) {
+                    hints.push(count);
+                    count = 0;
+                }
+            }
+            if (count > 0) hints.push(count);
+            return hints.length === 0 ? [0] : hints;
+        }
+
+        function updateHints() {
+            for (let r = 0; r < rows; r++) {
+                const hints = calculateHints(gridData[r]);
+                document.getElementById(`hint-row-${r}`).innerText = hints.join(' ');
+            }
+            for (let c = 0; c < cols; c++) {
+                const colData = [];
+                for (let r = 0; r < rows; r++) {
+                    colData.push(gridData[r][c]);
+                }
+                const hints = calculateHints(colData);
+                document.getElementById(`hint-col-${c}`).innerHTML = hints.join('<br>');
+            }
+        }
+
+        // --- 이미지 저장 로직 (공통 함수) ---
+        function captureBoard(filename, hideAnswer) {
+            const boardElement = document.querySelector('.game-board');
+            if (!boardElement) return;
+
+            // hideAnswer가 true면 잠시 정답(filled 클래스)을 제거
+            let filledCells = [];
+            if (hideAnswer) {
+                filledCells = boardElement.querySelectorAll('.cell.filled');
+                filledCells.forEach(cell => cell.classList.remove('filled'));
+            }
+
+            html2canvas(boardElement, {
+                scale: 2, 
+                backgroundColor: '#ffffff',
+                logging: false
+            }).then(canvas => {
+                // 숨겼던 정답 복구
+                if (hideAnswer) {
+                    filledCells.forEach(cell => cell.classList.add('filled'));
+                }
+
+                // 다운로드 실행
+                const image = canvas.toDataURL("image/png").replace("image/png", "image/octet-stream");
+                const a = document.createElement('a');
+                a.href = image;
+                a.download = filename;
+                a.click();
+            }).catch(err => {
+                if (hideAnswer) {
+                    filledCells.forEach(cell => cell.classList.add('filled'));
+                }
+                alert('이미지 생성 실패');
+                console.error(err);
+            });
+        }
+
+        // 문제지 저장 (정답 숨김)
+        function generateProblemSheet() {
+            captureBoard(`nonogram_problem_${rows}x${cols}.png`, true);
+        }
+
+        // 정답지 저장 (정답 포함)
+        function generateAnswerSheet() {
+            captureBoard(`nonogram_answer_${rows}x${cols}.png`, false);
+        }
+
+        // --- JSON 저장/불러오기 ---
+        function saveMap() {
+            const data = { rows, cols, grid: gridData };
+            const blob = new Blob([JSON.stringify(data)], { type: "application/json" });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `nonogram_data_${rows}x${cols}.json`;
+            a.click();
+            URL.revokeObjectURL(url);
+        }
+
+        function loadMap(input) {
+            const file = input.files[0];
+            if (!file) return;
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                try {
+                    const data = JSON.parse(e.target.result);
+                    document.getElementById('rows').value = data.rows;
+                    document.getElementById('cols').value = data.cols;
+                    rows = data.rows;
+                    cols = data.cols;
+                    gridData = data.grid;
+                    renderBoard();
+                } catch (err) { alert('파일 로드 실패'); }
+            };
+            reader.readAsText(file);
+            input.value = '';
+        }
+    </script>
+</body>
+</html>
